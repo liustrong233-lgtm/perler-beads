@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,12 +15,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "一头小猪拼豆底稿生成器",
   description: "免费在线拼豆图纸生成器，上传图片一键生成拼豆图纸",
-  manifest: "/manifest.json",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: "一头小猪",
-  },
   icons: {
     icon: [
       { url: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
@@ -30,14 +24,6 @@ export const metadata: Metadata = {
       { url: "/icon-192x192.png", sizes: "192x192", type: "image/png" },
     ],
   },
-};
-
-export const viewport: Viewport = {
-  themeColor: "#000000",
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
 };
 
 export default function RootLayout({
