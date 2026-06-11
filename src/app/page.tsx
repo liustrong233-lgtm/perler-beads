@@ -11,7 +11,8 @@ import {
   MappedPixel,
   hexToRgb,
   colorDistance,
-  findClosestPaletteColor
+  findClosestPaletteColor,
+  preprocessImage,
 } from '../utils/pixelation';
 
 // 导入新的类型和组件
@@ -93,6 +94,107 @@ import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtil
 
 // 1. 导入新的 DonationModal 组件 - 已移除
 
+
+// 使用说明组件 - 可折叠
+function UsageGuide() {
+  const [isOpen, setIsOpen] = React.useState(false);
+
+  return (
+    <div className="w-full md:max-w-md bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors"
+      >
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          使用说明
+        </span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className={"h-4 w-4 text-gray-400 transition-transform duration-200 " + (isOpen ? 'rotate-180' : '')}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      
+      {isOpen && (
+        <div className="px-4 pb-4 space-y-3 text-sm text-gray-600 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700 pt-3">
+          {/* 上传图片 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">📤</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">上传图片</p>
+              <p className="text-xs mt-0.5">拖拽或点击上传区域，支持 JPG / PNG / GIF 格式。图片越清晰效果越好。</p>
+            </div>
+          </div>
+
+          {/* 调整参数 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">🎚️</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">调整参数</p>
+              <ul className="text-xs mt-0.5 space-y-0.5 list-disc list-inside">
+                <li><strong>横轴切割数</strong>：建议 50-100，数值越大细节越多但颗粒越小</li>
+                <li><strong>颜色合并阈值</strong>：建议 20-40，值越小颜色越丰富</li>
+                <li><strong>处理模式</strong>：卡通(主色)颜色更纯 / 真实(平均)过渡更自然</li>
+                <li><strong>抖动算法</strong>：建议开启，让渐变更平滑自然</li>
+                <li><strong>锐化强度</strong>：模糊图片可适当提高，默认2即可</li>
+              </ul>
+            </div>
+          </div>
+
+          {/* 管理色板 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">🎨</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">管理色板</p>
+              <p className="text-xs mt-0.5">点击「管理色板」按你手上实际拥有的拼豆颜色勾选，勾选的颜色才会被使用。支持导入/导出配置。</p>
+            </div>
+          </div>
+
+          {/* 去除杂色 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">✂️</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">去除杂色</p>
+              <p className="text-xs mt-0.5">生成图纸后，点击下方颜色列表中的颜色即可排除，系统会自动替换为最相近的可用颜色。也可一键去背景。</p>
+            </div>
+          </div>
+
+          {/* 手动微调 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">✏️</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">手动微调</p>
+              <ul className="text-xs mt-0.5 space-y-0.5 list-disc list-inside">
+                <li>点击「进入手动编辑模式」后可逐格改色</li>
+                <li>支持颜色替换、擦除、放大镜等工具</li>
+                <li>推荐在电脑上操作，上色更精准</li>
+              </ul>
+            </div>
+          </div>
+
+          {/* 下载图纸 */}
+          <div className="flex items-start gap-2">
+            <span className="text-lg flex-shrink-0">📥</span>
+            <div>
+              <p className="font-medium text-gray-700 dark:text-gray-300">下载图纸</p>
+              <ul className="text-xs mt-0.5 space-y-0.5 list-disc list-inside">
+                <li>可设置网格线、坐标、材料清单</li>
+                <li>支持导出 CSV 数据文件</li>
+                <li>CSV 可重新导入继续编辑</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [originalImageSrc, setOriginalImageSrc] = useState<string | null>(null);
   const [granularity, setGranularity] = useState<number>(50);
@@ -139,6 +241,10 @@ export default function Home() {
     includeStats: true, // 默认包含统计信息
     exportCsv: false // 默认不导出CSV
   });
+
+  // 增强功能：抖动 + 锐化
+  const [useDithering, setUseDithering] = useState<boolean>(true);
+  const [sharpenStrength, setSharpenStrength] = useState<number>(2); // 0-5
 
   // 新增：高亮相关状态
   const [highlightColorKey, setHighlightColorKey] = useState<string | null>(null);
@@ -877,17 +983,24 @@ export default function Home() {
       originalCtx.drawImage(img, 0, 0, img.width, img.height);
       console.log("Original image drawn.");
 
-      // 1. 使用calculatePixelGrid进行初始颜色映射
-      console.log("Starting initial color mapping using calculatePixelGrid...");
+      // 图片预处理：锐化（去模糊）
+      if (sharpenStrength > 0) {
+        console.log(`Applying image preprocessing (sharpen strength: ${sharpenStrength})...`);
+        preprocessImage(originalCtx, img.width, img.height, sharpenStrength);
+      }
+
+      // 1. 使用calculatePixelGrid进行初始颜色映射（CIEDE2000 + 抖动）
+      console.log(`Starting initial color mapping using calculatePixelGrid (dithering: ${useDithering})...`);
       const initialMappedData = calculatePixelGrid(
           originalCtx,
           img.width,
           img.height,
           N,
           M,
-          currentPalette, 
+          currentPalette,
           mode,
-          t1FallbackColor
+          t1FallbackColor,
+          useDithering
       );
       console.log(`Initial data mapping complete using mode ${mode}. Starting global color merging...`);
 
@@ -2079,6 +2192,9 @@ export default function Home() {
           </div>
         )}
 
+        {/* 使用说明 - 可折叠 */}
+        <UsageGuide />
+
                       <input type="file" accept="image/jpeg, image/png, image/gif, .csv, text/csv, application/csv, text/plain" onChange={handleFileChange} ref={fileInputRef} className="hidden" />
 
         {/* Controls and Output Area */}
@@ -2167,6 +2283,48 @@ export default function Home() {
                       <option value={PixelationMode.Dominant} className="bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200">卡通 (主色)</option>
                       <option value={PixelationMode.Average} className="bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200">真实 (平均)</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* 抖动开关 */}
+                <div className="flex items-center justify-between">
+                  <label htmlFor="ditheringToggle" className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">
+                    抖动算法 (Floyd-Steinberg):
+                  </label>
+                  <button
+                    id="ditheringToggle"
+                    onClick={() => { setUseDithering(!useDithering); setRemapTrigger(prev => prev + 1); }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 ${
+                      useDithering ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+                        useDithering ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* 锐化强度滑块 */}
+                <div>
+                  <label htmlFor="sharpenSlider" className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2">
+                    锐化强度: {sharpenStrength}
+                  </label>
+                  <input
+                    type="range"
+                    id="sharpenSlider"
+                    min="0"
+                    max="5"
+                    value={sharpenStrength}
+                    onChange={(e) => { setSharpenStrength(Number(e.target.value)); }}
+                    onMouseUp={() => setRemapTrigger(prev => prev + 1)}
+                    onTouchEnd={() => setRemapTrigger(prev => prev + 1)}
+                    className="w-full h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  />
+                  <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    <span>0 (关闭)</span>
+                    <span>5 (最强)</span>
                   </div>
                 </div>
 
