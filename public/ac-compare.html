@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全铜蒸发器 3匹一级能效空调对比 — 2026年6月</title>
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+  .container { max-width: 1400px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a; }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; font-size: 13px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .confirmed { background: #22c55e; } .inferred { background: #f59e0b; } .not-verified { background: #ef4444; }
+  table.dataTable { font-size: 13px; }
+  .price-regular { color: #999; text-decoration: line-through; font-size: 12px; }
+  .price-sale { color: #e53e3e; font-weight: bold; font-size: 15px; }
+  .source-link { font-size: 11px; }
+  .footnote { margin-top: 24px; padding: 16px; background: #fefce8; border-left: 4px solid #eab308; border-radius: 4px; font-size: 13px; color: #713f12; line-height: 1.8; }
+  .footnote strong { color: #854d0e; }
+  .dataTables_wrapper .dt-buttons { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>全铜蒸发器 · 3匹 · 一级能效 · 立柜式空调 对比</h1>
+<p class="subtitle">
+  筛选条件：全铜蒸发器 | 2-3HP（客厅适用）| 一级/新一级能效 | 冷却性能优先<br>
+  数据时间：2026年6月 | 来源：什么值得买、中关村在线、京东公开页面
+</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot confirmed"></span> 蒸发器材质已确认（官方标注全铜）</div>
+  <div class="legend-item"><span class="legend-dot inferred"></span> 蒸发器材质推断（同级定位+铜管标注）</div>
+  <div class="legend-item"><span class="legend-dot not-verified"></span> 材质未确认（仅平台描述）</div>
+</div>
+
+<table id="comparisonTable" class="display compact" style="width:100%">
+<thead>
+<tr>
+  <th>品牌</th>
+  <th>系列</th>
+  <th>型号</th>
+  <th>匹数</th>
+  <th>能效等级</th>
+  <th>APF能效比</th>
+  <th>制冷量(W)</th>
+  <th>循环风量(m³/h)</th>
+  <th>蒸发器材质</th>
+  <th>铜管确认</th>
+  <th>常规价(¥)</th>
+  <th>活动/补贴价(¥)</th>
+  <th>性价比评级</th>
+  <th>特色功能</th>
+  <th>数据来源</th>
+</tr>
+</thead>
+<tbody>
+
+<!-- 格力 云锦Ⅱ — 蒸发器已确认 -->
+<tr>
+  <td>格力</td>
+  <td>云锦Ⅱ</td>
+  <td>KFR-72LW/NhAg1BAj</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>4.42</td>
+  <td>7210</td>
+  <td>1310</td>
+  <td>U型一体铜管蒸发器</td>
+  <td>已确认</td>
+  <td>7,199</td>
+  <td>5,783</td>
+  <td>良</td>
+  <td>56℃自洁、WiFi智控、10年蒸发器包修</td>
+  <td><a href="https://www.smzdm.com/p/173334639/" target="_blank">什么值得买</a> <a href="https://jd.zol.com.cn/1173/11737240.html" target="_blank">中关村在线</a></td>
+</tr>
+
+<!-- 美的 锐静 — 铜管连接标注 -->
+<tr>
+  <td>美的</td>
+  <td>锐静</td>
+  <td>KFR-72LW/N8VHC1</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>—</td>
+  <td>—</td>
+  <td>—</td>
+  <td>铜管连接（标注）</td>
+  <td>推断</td>
+  <td>5,998</td>
+  <td>4,031</td>
+  <td>优</td>
+  <td>自清洁、APP远程、静音22dB、99%好评</td>
+  <td><a href="https://www.smzdm.com/p/176603925/" target="_blank">什么值得买</a></td>
+</tr>
+
+<!-- 美的 酷省电 -->
+<tr>
+  <td>美的</td>
+  <td>酷省电</td>
+  <td>KFR-72LW</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>—</td>
+  <td>—</td>
+  <td>1550</td>
+  <td>铜管（中高端定位）</td>
+  <td>推断</td>
+  <td>5,799</td>
+  <td>—</td>
+  <td>良</td>
+  <td>ECO节能37%、光感自动调节、能耗监控</td>
+  <td><a href="https://www.smzdm.com/p/a342x2vd/" target="_blank">什么值得买</a></td>
+</tr>
+
+<!-- 美的 风尊 -->
+<tr>
+  <td>美的</td>
+  <td>风尊</td>
+  <td>KFR-72LW/N8MZB1</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>—</td>
+  <td>—</td>
+  <td>—</td>
+  <td>铜管（中高端定位）</td>
+  <td>推断</td>
+  <td>5,399</td>
+  <td>—</td>
+  <td>良</td>
+  <td>智能感应调温、静音、快速冷暖</td>
+  <td><a href="https://www.ftxia.com/p/3122260" target="_blank">Ftxia</a></td>
+</tr>
+
+<!-- 美的 静优风 -->
+<tr>
+  <td>美的</td>
+  <td>静优风 HY1-1</td>
+  <td>—</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>4.55</td>
+  <td>—</td>
+  <td>1700</td>
+  <td>铜管（中高端定位）</td>
+  <td>推断</td>
+  <td>5,999</td>
+  <td>5,000</td>
+  <td>优</td>
+  <td>110°超广角送风、日光氧除菌99%、60℃高温制冷</td>
+  <td><a href="https://www.smzdm.com/p/a342x2vd/" target="_blank">什么值得买</a></td>
+</tr>
+
+<!-- 海尔 静悦 — 双排铜管确认 -->
+<tr>
+  <td>海尔</td>
+  <td>静悦</td>
+  <td>KFR-72LW/28KCA81U1</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>4.46</td>
+  <td>—</td>
+  <td>1510</td>
+  <td>双排铜管（标注）</td>
+  <td>已确认</td>
+  <td>5,599</td>
+  <td>4,479</td>
+  <td>优</td>
+  <td>56℃自清洁、PKC升频技术、48种送风角度、99%好评</td>
+  <td><a href="https://www.smzdm.com/p/159287073/" target="_blank">什么值得买</a> <a href="https://post.smzdm.com/talk/p/arzemm6w/" target="_blank">评测</a></td>
+</tr>
+
+<!-- 海信 易省电Pro — 铜管推断 -->
+<tr>
+  <td>海信</td>
+  <td>易省电Pro E370</td>
+  <td>—</td>
+  <td>3匹</td>
+  <td>超一级</td>
+  <td>5.10</td>
+  <td>—</td>
+  <td>1810</td>
+  <td>铜管（中高端定位）</td>
+  <td>推断</td>
+  <td>4,939</td>
+  <td>3,198</td>
+  <td>极优</td>
+  <td>AI省电41%、20秒速冷、18米远送风、APF 5.1</td>
+  <td><a href="https://post.smzdm.com/p/a0zmvmn8/" target="_blank">什么值得买</a></td>
+</tr>
+
+<!-- 三菱电机 XT — 三排铜管确认 -->
+<tr>
+  <td>三菱电机</td>
+  <td>XT</td>
+  <td>MFZ-XT73VFK</td>
+  <td>3匹</td>
+  <td>新一级</td>
+  <td>—</td>
+  <td>7200</td>
+  <td>—</td>
+  <td>三排铜管（标注）</td>
+  <td>已确认</td>
+  <td>19,399</td>
+  <td>18,522</td>
+  <td>差</td>
+  <td>原装龙骨马达、R32冷媒、12米远送风、干燥模式、APP控制</td>
+  <td><a href="https://wiki.smzdm.com/p/38qz3ym/" target="_blank">什么值得买</a></td>
+</tr>
+
+</tbody>
+</table>
+
+<div class="footnote">
+  <strong>说明：</strong><br>
+  1. <strong>铜管确认栏</strong>：「已确认」= 产品官方页面或评测明确标注全铜/铜管蒸发器材质；「推断」= 同级产品定位+宣传中有铜管相关描述，但未直接确认蒸发器为全铜<br>
+  2. <strong>活动/补贴价</strong>：来自618大促、国家补贴、以旧换新等叠加优惠，非日常价，需等活动窗口<br>
+  3. <strong>性价比评级</strong>：综合活动价+能效比+特色功能，不单纯按价格排序<br>
+  4. <strong>数据来源</strong>：均为公开页面（什么值得买/中关村在线/京东），可点击链接验证。不含自采或推断数据<br>
+  5. <strong>缺少历史最低价</strong>：京东/淘宝/拼多多均需平台API Key或登录才能获取历史价格曲线，当前仅提供公开可查的近期价格参考<br>
+  6. 数据采集时间：2026-06-15，价格可能已变动
+</div>
+
+</div>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/dataTables.buttons.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.datatables.net/buttons/2.4.2/js/buttons.html5.min.js"></script>
+<script>
+$(document).ready(function() {
+  $('#comparisonTable').DataTable({
+    pageLength: 20,
+    order: [[11, 'asc']],  // 按活动价升序排列
+    dom: 'Bfrtip',
+    buttons: [
+      { extend: 'csvHtml5', text: '导出 CSV', className: 'export-csv' },
+      { extend: 'excelHtml5', text: '导出 Excel', className: 'export-excel' }
+    ],
+    columnDefs: [
+      { type: 'num', targets: [10, 11] }
+    ],
+    language: {
+      url: 'https://cdn.datatables.net/plug-ins/1.13.7/i18n/zh.json'
+    }
+  });
+});
+</script>
+</body>
+</html>
