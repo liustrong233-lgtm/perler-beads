@@ -967,25 +967,36 @@ export default function Home() {
       if (N > 100) {
         console.log(`💡 由于格子数量较多 (${N}x${M})，画布已自动放大以保持清晰度。可以使用水平滚动查看完整图像。`);
       }
-      originalCanvas.width = img.width; originalCanvas.height = img.height;
-      pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
-      console.log(`Canvas dimensions: Original ${img.width}x${img.height}, Output ${outputWidth}x${outputHeight}`);
+      // 限制原图最大尺寸，防止大图 OOM 崩溃
+      const MAX_SOURCE_DIM = 1200;
+      let sourceWidth = img.width;
+      let sourceHeight = img.height;
+      if (Math.max(sourceWidth, sourceHeight) > MAX_SOURCE_DIM) {
+        const scale = MAX_SOURCE_DIM / Math.max(sourceWidth, sourceHeight);
+        sourceWidth = Math.round(sourceWidth * scale);
+        sourceHeight = Math.round(sourceHeight * scale);
+        console.log(`图片已缩放: ${img.width}x${img.height} → ${sourceWidth}x${sourceHeight}`);
+      }
 
-      originalCtx.drawImage(img, 0, 0, img.width, img.height);
+      originalCanvas.width = sourceWidth; originalCanvas.height = sourceHeight;
+      pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
+      console.log(`Canvas dimensions: Source ${sourceWidth}x${sourceHeight}, Output ${outputWidth}x${outputHeight}`);
+
+      originalCtx.drawImage(img, 0, 0, sourceWidth, sourceHeight);
       console.log("Original image drawn.");
 
       // 图片预处理：锐化（去模糊）
       if (sharpenStrength > 0) {
         console.log(`Applying image preprocessing (sharpen strength: ${sharpenStrength})...`);
-        preprocessImage(originalCtx, img.width, img.height, sharpenStrength);
+        preprocessImage(originalCtx, sourceWidth, sourceHeight, sharpenStrength);
       }
 
       // 1. 使用calculatePixelGrid进行初始颜色映射（CIEDE2000 + 抖动）
       console.log(`Starting initial color mapping using calculatePixelGrid (dithering: ${useDithering})...`);
       const initialMappedData = calculatePixelGrid(
           originalCtx,
-          img.width,
-          img.height,
+          sourceWidth,
+          sourceHeight,
           N,
           M,
           currentPalette,
