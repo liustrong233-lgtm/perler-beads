@@ -208,7 +208,9 @@ export async function downloadImage({
   totalBeadCount,
   options,
   activeBeadPalette,
-  selectedColorSystem
+  selectedColorSystem,
+  sectionLabel,
+  sectionInfo,
 }: {
   mappedPixelData: MappedPixel[][] | null;
   gridDimensions: { N: number; M: number } | null;
@@ -217,6 +219,8 @@ export async function downloadImage({
   options: GridDownloadOptions;
   activeBeadPalette: PaletteColor[];
   selectedColorSystem: ColorSystem;
+  sectionLabel?: string; // 分块标签，如 "1-1"
+  sectionInfo?: string; // 分块信息，如 "第 1 块，共 3 块"
 }): Promise<void> {
   if (!mappedPixelData || !gridDimensions || gridDimensions.N === 0 || gridDimensions.M === 0 || activeBeadPalette.length === 0) {
     console.error("下载失败: 映射数据或尺寸无效。");
@@ -370,9 +374,16 @@ export async function downloadImage({
     const subTitleY = titleBarHeight * 0.65;
     
     ctx.fillText('拼豆底稿生成器', titleStartX, subTitleY);
-    
-    
-    
+
+    // 5. 分块标签（如果有）
+    if (sectionInfo) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      const sectionFontSize = Math.max(10, Math.floor(titleFontSize * 0.3));
+      ctx.font = `400 ${sectionFontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.fillText(sectionInfo, downloadWidth - 20, titleBarHeight * 0.55);
+    }
+
     // 优雅的分割线
     const separatorY = titleBarHeight - 1;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
@@ -751,9 +762,10 @@ export async function downloadImage({
     try {
       const dataURL = downloadCanvas.toDataURL('image/png');
       const link = document.createElement('a');
+      const sectionSuffix = sectionLabel ? `-section-${sectionLabel}` : '';
       link.download = showCellNumbers
-        ? `bead-grid-${N}x${M}-keys-palette_${selectedColorSystem}.png`
-        : `bead-grid-${N}x${M}-pixel-palette_${selectedColorSystem}.png`;
+        ? `bead-grid-${N}x${M}${sectionSuffix}-keys-palette_${selectedColorSystem}.png`
+        : `bead-grid-${N}x${M}${sectionSuffix}-pixel-palette_${selectedColorSystem}.png`;
       link.href = dataURL;
       document.body.appendChild(link);
       link.click();

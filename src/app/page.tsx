@@ -237,6 +237,15 @@ export default function Home() {
   const [useDithering, setUseDithering] = useState<boolean>(true);
   const [sharpenStrength, setSharpenStrength] = useState<number>(2); // 0-5
 
+  // 大图分块模式：把原图切成多个小板，每块独立生成图纸，用户物理拼装还原大图
+  const [splitMode, setSplitMode] = useState<boolean>(false);
+  const [minPixelsPerBead, setMinPixelsPerBead] = useState<number>(3); // 每格最少对应原图像素数（2-10），越小越精细但分块越多
+  const [sectionGrids, setSectionGrids] = useState<{
+    grids: { data: MappedPixel[][]; N: number; M: number }[][];
+    layout: { rows: number; cols: number };
+  } | null>(null);
+  const [activeSection, setActiveSection] = useState<{ row: number; col: number } | null>(null);
+
   // 新增：高亮相关状态
   const [highlightColorKey, setHighlightColorKey] = useState<string | null>(null);
 
@@ -292,6 +301,9 @@ export default function Home() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 2000);
   }, []);
+
+  // 跟踪下载模式：下载全部还是当前块
+  const [pendingDownloadAll, setPendingDownloadAll] = useState(false);
 
   // 放大镜切换处理函数
   const handleToggleMagnifier = () => {
@@ -890,6 +902,73 @@ export default function Home() {
     }
   };
 
+  // 颜色合并辅助函数：将相似颜色按频率优先级合并
+  const mergeSimilarColorsInGrid = (
+    initialMappedData: MappedPixel[][],
+    N: number,
+    M: number,
+    currentPalette: PaletteColor[],
+    threshold: number,
+    colorDistanceFn: typeof colorDistance,
+    transparentKey: string,
+  ): MappedPixel[][] => {
+    const keyToRgbMap = new Map<string, RgbColor>();
+    const keyToColorDataMap = new Map<string, PaletteColor>();
+    currentPalette.forEach(p => {
+      keyToRgbMap.set(p.key, p.rgb);
+      keyToColorDataMap.set(p.key, p);
+    });
+
+    const initialColorCounts: { [key: string]: number } = {};
+    initialMappedData.flat().forEach(cell => {
+      if (cell && cell.key && !cell.isExternal && cell.key !== transparentKey) {
+        initialColorCounts[cell.key] = (initialColorCounts[cell.key] || 0) + 1;
+      }
+    });
+
+    const colorsByFrequency = Object.entries(initialColorCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(entry => entry[0]);
+
+    if (colorsByFrequency.length === 0) return initialMappedData;
+
+    const mergedData = initialMappedData.map(row =>
+      row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false }))
+    );
+
+    const replacedColors = new Set<string>();
+
+    for (let i = 0; i < colorsByFrequency.length; i++) {
+      const currentKey = colorsByFrequency[i];
+      if (replacedColors.has(currentKey)) continue;
+      const currentRgb = keyToRgbMap.get(currentKey);
+      if (!currentRgb) continue;
+
+      for (let j = i + 1; j < colorsByFrequency.length; j++) {
+        const lowerFreqKey = colorsByFrequency[j];
+        if (replacedColors.has(lowerFreqKey)) continue;
+        const lowerFreqRgb = keyToRgbMap.get(lowerFreqKey);
+        if (!lowerFreqRgb) continue;
+
+        const dist = colorDistanceFn(currentRgb, lowerFreqRgb);
+        if (dist < threshold) {
+          replacedColors.add(lowerFreqKey);
+          for (let r = 0; r < M; r++) {
+            for (let c = 0; c < N; c++) {
+              if (mergedData[r][c].key === lowerFreqKey) {
+                const colorData = keyToColorDataMap.get(currentKey);
+                if (colorData) {
+                  mergedData[r][c] = { key: currentKey, color: colorData.hex, isExternal: false };
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return mergedData;
+  };
+
   // 修改pixelateImage函数接收模式参数
   const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode) => {
     console.log(`Attempting to pixelate with detail: ${detailLevel}, threshold: ${threshold}, mode: ${mode}`);
@@ -967,8 +1046,8 @@ export default function Home() {
       if (N > 100) {
         console.log(`💡 由于格子数量较多 (${N}x${M})，画布已自动放大以保持清晰度。可以使用水平滚动查看完整图像。`);
       }
-      // 限制原图最大尺寸，防止大图 OOM 崩溃
-      const MAX_SOURCE_DIM = 1200;
+      // 限制原图最大尺寸（分块模式放宽，每块只处理一小片不 OOM）
+      const MAX_SOURCE_DIM = splitMode ? 4000 : 1200;
       let sourceWidth = img.width;
       let sourceHeight = img.height;
       if (Math.max(sourceWidth, sourceHeight) > MAX_SOURCE_DIM) {
@@ -979,160 +1058,134 @@ export default function Home() {
       }
 
       originalCanvas.width = sourceWidth; originalCanvas.height = sourceHeight;
-      pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
-      console.log(`Canvas dimensions: Source ${sourceWidth}x${sourceHeight}, Output ${outputWidth}x${outputHeight}`);
-
       originalCtx.drawImage(img, 0, 0, sourceWidth, sourceHeight);
-      console.log("Original image drawn.");
 
       // 图片预处理：锐化（去模糊）
       if (sharpenStrength > 0) {
-        console.log(`Applying image preprocessing (sharpen strength: ${sharpenStrength})...`);
         preprocessImage(originalCtx, sourceWidth, sourceHeight, sharpenStrength);
       }
 
-      // 1. 使用calculatePixelGrid进行初始颜色映射（CIEDE2000 + 抖动）
-      console.log(`Starting initial color mapping using calculatePixelGrid (dithering: ${useDithering})...`);
-      const initialMappedData = calculatePixelGrid(
-          originalCtx,
-          sourceWidth,
-          sourceHeight,
-          N,
-          M,
-          currentPalette,
-          mode,
-          t1FallbackColor,
-          useDithering
-      );
-      console.log(`Initial data mapping complete using mode ${mode}. Starting global color merging...`);
+      if (splitMode) {
+        // ========== 大图分块模式 ==========
+        const beadsPerBoardX = detailLevel; // 每板横轴格数
+        const beadsPerBoardY = Math.max(1, Math.round(beadsPerBoardX * aspectRatio));
 
-      // --- 新的全局颜色合并逻辑 ---
-      const keyToRgbMap = new Map<string, RgbColor>();
-      const keyToColorDataMap = new Map<string, PaletteColor>();
-      currentPalette.forEach(p => {
-        keyToRgbMap.set(p.key, p.rgb);
-        keyToColorDataMap.set(p.key, p);
-      });
+        // 计算需要多少列分块（1D 水平分块，每块同高）
+        const totalBeadsNeededX = Math.ceil(sourceWidth / minPixelsPerBead);
+        const sectionCols = Math.ceil(totalBeadsNeededX / beadsPerBoardX);
 
-      // 2. 统计初始颜色数量
-      const initialColorCounts: { [key: string]: number } = {};
-      initialMappedData.flat().forEach(cell => {
-          if (cell && cell.key && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
-              initialColorCounts[cell.key] = (initialColorCounts[cell.key] || 0) + 1;
+        console.log(`分块模式: ${sectionCols} 列, 每块 ${beadsPerBoardX}x${beadsPerBoardY} 格, 原图 ${sourceWidth}x${sourceHeight}`);
+
+        const allSectionRows: { data: MappedPixel[][]; N: number; M: number }[][] = [];
+
+        for (let col = 0; col < sectionCols; col++) {
+          // 计算该块在原图中的像素范围
+          const pxPerBeadX = minPixelsPerBead;
+          const pixelX = col * beadsPerBoardX * pxPerBeadX;
+          const pixelW = Math.min(beadsPerBoardX * pxPerBeadX, sourceWidth - pixelX);
+
+          // 该块的格子数（最后一块可能略窄）
+          const sectionN = Math.max(1, Math.round(beadsPerBoardX * (pixelW / (beadsPerBoardX * pxPerBeadX))));
+          const sectionM = beadsPerBoardY;
+
+          // 创建临时 canvas，只拷贝该块的像素区域
+          const sectionCanvas = document.createElement('canvas');
+          sectionCanvas.width = pixelW;
+          sectionCanvas.height = sourceHeight;
+          const sectionCtx = sectionCanvas.getContext('2d', { willReadFrequently: true });
+          if (!sectionCtx) continue;
+
+          // 像素级精确拷贝：只取该块对应的原图像素
+          const srcData = originalCtx.getImageData(pixelX, 0, pixelW, sourceHeight);
+          sectionCtx.putImageData(srcData, 0, 0);
+
+          // 该块独立预处理（锐化）
+          if (sharpenStrength > 0) {
+            preprocessImage(sectionCtx, pixelW, sourceHeight, sharpenStrength);
           }
-      });
-      console.log("Initial color counts:", initialColorCounts);
 
-      // 3. 创建一个颜色排序列表，按出现频率从高到低排序
-      const colorsByFrequency = Object.entries(initialColorCounts)
-          .sort((a, b) => b[1] - a[1])  // 按频率降序排序
-          .map(entry => entry[0]);      // 只保留颜色键
-      
-      if (colorsByFrequency.length === 0) {
-          console.log("No non-background colors found! Skipping merging.");
-      }
+          // 该块独立像素化
+          const sectionPixelData = calculatePixelGrid(
+            sectionCtx, pixelW, sourceHeight,
+            sectionN, sectionM,
+            currentPalette, mode, t1FallbackColor, useDithering
+          );
 
-      console.log("Colors sorted by frequency:", colorsByFrequency);
-      
-      // 4. 复制初始数据，准备合并
-      const mergedData: MappedPixel[][] = initialMappedData.map(row => 
-          row.map(cell => ({ ...cell, isExternal: cell.isExternal ?? false }))
-      );
-      
-      // 5. 处理相似颜色合并
-      const similarityThresholdValue = threshold;
-      
-      // 已被合并（替换）的颜色集合
-      const replacedColors = new Set<string>();
-      
-      // 对每个颜色按频率从高到低处理
-      for (let i = 0; i < colorsByFrequency.length; i++) {
-          const currentKey = colorsByFrequency[i];
-          
-          // 如果当前颜色已经被合并到更频繁的颜色中，跳过
-          if (replacedColors.has(currentKey)) continue;
-          
-          const currentRgb = keyToRgbMap.get(currentKey);
-          if (!currentRgb) {
-              console.warn(`RGB not found for key ${currentKey}. Skipping.`);
-              continue;
-          }
-          
-          // 检查剩余的低频颜色
-          for (let j = i + 1; j < colorsByFrequency.length; j++) {
-              const lowerFreqKey = colorsByFrequency[j];
-              
-              // 如果低频颜色已被替换，跳过
-              if (replacedColors.has(lowerFreqKey)) continue;
-              
-              const lowerFreqRgb = keyToRgbMap.get(lowerFreqKey);
-              if (!lowerFreqRgb) {
-                  console.warn(`RGB not found for key ${lowerFreqKey}. Skipping.`);
-                  continue;
-              }
-              
-              // 计算颜色距离
-              const dist = colorDistance(currentRgb, lowerFreqRgb);
-              
-              // 如果距离小于阈值，将低频颜色替换为高频颜色
-              if (dist < similarityThresholdValue) {
-                  console.log(`Merging color ${lowerFreqKey} into ${currentKey} (Distance: ${dist.toFixed(2)})`);
-                  
-                  // 标记这个颜色已被替换
-                  replacedColors.add(lowerFreqKey);
-                  
-                  // 替换所有使用这个低频颜色的单元格
-                  for (let r = 0; r < M; r++) {
-                      for (let c = 0; c < N; c++) {
-                          if (mergedData[r][c].key === lowerFreqKey) {
-                              const colorData = keyToColorDataMap.get(currentKey);
-                              if (colorData) {
-                                  mergedData[r][c] = {
-                                      key: currentKey,
-                                      color: colorData.hex,
-                                      isExternal: false
-                                  };
-                              }
-                          }
-                      }
-                  }
-              }
-          }
-      }
-      
-      if (replacedColors.size > 0) {
-          console.log(`Merged ${replacedColors.size} less frequent similar colors into more frequent ones.`);
-      } else {
-          console.log("No colors were similar enough to merge.");
-      }
-      // --- 结束新的全局颜色合并逻辑 ---
+          // 该块独立颜色合并
+          const merged = mergeSimilarColorsInGrid(
+            sectionPixelData, sectionN, sectionM,
+            currentPalette, threshold, colorDistance, TRANSPARENT_KEY
+          );
 
-      // --- 绘制和状态更新 ---
-      if (pixelatedCanvasRef.current) {
-        setMappedPixelData(mergedData);
-        setGridDimensions({ N, M });
+          allSectionRows.push([{ data: merged, N: sectionN, M: sectionM }]);
+        }
 
-        const counts: { [key: string]: { count: number; color: string } } = {};
-        let totalCount = 0;
-        mergedData.flat().forEach(cell => {
-          if (cell && cell.key && !cell.isExternal) {
-            // 使用hex值作为统计键值，而不是色号
-            const hexKey = cell.color;
-            if (!counts[hexKey]) {
-              counts[hexKey] = { count: 0, color: cell.color };
+        // 存储分块结果
+        setSectionGrids({ grids: allSectionRows, layout: { rows: 1, cols: sectionCols } });
+        setActiveSection({ row: 0, col: 0 });
+
+        // 预览画布：显示第一块
+        const firstSection = allSectionRows[0][0];
+        setMappedPixelData(firstSection.data);
+        setGridDimensions({ N: firstSection.N, M: firstSection.M });
+        const pw = Math.min(800, Math.max(400, firstSection.N * 6));
+        pixelatedCanvas.width = pw;
+        pixelatedCanvas.height = Math.round(pw * (firstSection.M / firstSection.N));
+
+        // 所有块颜色合并统计
+        const aggCounts: { [hexKey: string]: { count: number; color: string } } = {};
+        let aggTotal = 0;
+        allSectionRows.flat().forEach(section => {
+          section.data.flat().forEach(cell => {
+            if (cell && cell.key && !cell.isExternal) {
+              const hk = cell.color;
+              if (!aggCounts[hk]) aggCounts[hk] = { count: 0, color: cell.color };
+              aggCounts[hk].count++;
+              aggTotal++;
             }
-            counts[hexKey].count++;
-            totalCount++;
-          }
+          });
         });
-        setColorCounts(counts);
-        setTotalBeadCount(totalCount);
-        setInitialGridColorKeys(new Set(Object.keys(counts)));
-        console.log("Color counts updated based on merged data (after merging):", counts);
-        console.log("Total bead count (total beads):", totalCount);
-        console.log("Stored initial grid color keys:", Object.keys(counts));
+        setColorCounts(aggCounts);
+        setTotalBeadCount(aggTotal);
+        setInitialGridColorKeys(new Set(Object.keys(aggCounts)));
+
+        console.log(`分块完成: ${sectionCols} 块, 共 ${aggTotal} 颗珠子, ${Object.keys(aggCounts).length} 种颜色`);
       } else {
-        console.error("Pixelated canvas ref is null, skipping draw call in pixelateImage.");
+        // ========== 普通模式（原有逻辑）==========
+        pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
+        console.log(`Canvas dimensions: Source ${sourceWidth}x${sourceHeight}, Output ${outputWidth}x${outputHeight}`);
+
+        // 使用calculatePixelGrid进行初始颜色映射
+        const initialMappedData = calculatePixelGrid(
+          originalCtx, sourceWidth, sourceHeight, N, M,
+          currentPalette, mode, t1FallbackColor, useDithering
+        );
+
+        // 全局颜色合并
+        const mergedData = mergeSimilarColorsInGrid(
+          initialMappedData, N, M,
+          currentPalette, threshold, colorDistance, TRANSPARENT_KEY
+        );
+
+        // 状态更新
+        if (pixelatedCanvasRef.current) {
+          setMappedPixelData(mergedData);
+          setGridDimensions({ N, M });
+
+          const counts: { [key: string]: { count: number; color: string } } = {};
+          let totalCount = 0;
+          mergedData.flat().forEach(cell => {
+            if (cell && cell.key && !cell.isExternal) {
+              const hexKey = cell.color;
+              if (!counts[hexKey]) counts[hexKey] = { count: 0, color: cell.color };
+              counts[hexKey].count++;
+              totalCount++;
+            }
+          });
+          setColorCounts(counts);
+          setTotalBeadCount(totalCount);
+          setInitialGridColorKeys(new Set(Object.keys(counts)));
+        }
       }
     }; // 正确闭合 img.onload 函数
     
@@ -1148,6 +1201,23 @@ export default function Home() {
     setBgRemovalSnapshot(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remapTrigger]);
+
+  // 分块模式：切换 activeSection 时更新 mappedPixelData 和预览
+  useEffect(() => {
+    if (!splitMode || !sectionGrids || !activeSection) return;
+    const section = sectionGrids.grids[activeSection.row]?.[activeSection.col];
+    if (!section) return;
+
+    setMappedPixelData(section.data);
+    setGridDimensions({ N: section.N, M: section.M });
+
+    // 重绘预览 canvas
+    const pixelatedCanvas = pixelatedCanvasRef.current;
+    if (!pixelatedCanvas) return;
+    const pw = Math.min(800, Math.max(400, section.N * 6));
+    pixelatedCanvas.width = pw;
+    pixelatedCanvas.height = Math.round(pw * (section.M / section.N));
+  }, [activeSection, splitMode, sectionGrids]);
 
   // 修改useEffect中的pixelateImage调用，加入模式参数
   useEffect(() => {
@@ -1203,7 +1273,12 @@ export default function Home() {
 
     // --- Download function (ensure filename includes palette) ---
     const handleDownloadRequest = (options?: GridDownloadOptions) => {
-        // 调用移动到utils/imageDownloader.ts中的downloadImage函数
+        const sectionLabel = splitMode && activeSection
+          ? `${activeSection.row + 1}-${activeSection.col + 1}`
+          : undefined;
+        const sectionInfo = splitMode && sectionGrids
+          ? `第 ${(activeSection?.col ?? 0) + 1} 块，共 ${sectionGrids.layout.cols} 块`
+          : undefined;
         downloadImage({
           mappedPixelData,
           gridDimensions,
@@ -1211,8 +1286,46 @@ export default function Home() {
           totalBeadCount,
           options: options || downloadOptions,
           activeBeadPalette,
-          selectedColorSystem
+          selectedColorSystem,
+          sectionLabel,
+          sectionInfo,
         });
+    };
+
+    // 下载所有分块
+    const handleDownloadAllSections = (options?: GridDownloadOptions) => {
+      if (!sectionGrids) return;
+      const opt = options || downloadOptions;
+      // 逐个下载，用 setTimeout 避免浏览器阻止多次下载
+      sectionGrids.grids.forEach((row, rowIdx) => {
+        row.forEach((section, colIdx) => {
+          setTimeout(() => {
+            // 计算该分块的颜色统计
+            const secCounts: { [hexKey: string]: { count: number; color: string } } = {};
+            let secTotal = 0;
+            section.data.flat().forEach(cell => {
+              if (cell && cell.key && !cell.isExternal) {
+                const hk = cell.color;
+                if (!secCounts[hk]) secCounts[hk] = { count: 0, color: cell.color };
+                secCounts[hk].count++;
+                secTotal++;
+              }
+            });
+
+            downloadImage({
+              mappedPixelData: section.data,
+              gridDimensions: { N: section.N, M: section.M },
+              colorCounts: secCounts,
+              totalBeadCount: secTotal,
+              options: opt,
+              activeBeadPalette,
+              selectedColorSystem,
+              sectionLabel: `${rowIdx + 1}-${colIdx + 1}`,
+              sectionInfo: `第 ${colIdx + 1} 块，共 ${sectionGrids.layout.cols} 块`,
+            });
+          }, (rowIdx * sectionGrids.layout.cols + colIdx) * 300);
+        });
+      });
     };
 
     // --- Handler to toggle color exclusion ---
@@ -2195,6 +2308,59 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* 大图分块模式 */}
+                <div className="sm:col-span-2 border-t border-gray-200 dark:border-gray-700 pt-3 mt-1">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <label className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300">
+                        大图分块模式
+                      </label>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                        大图不缩放，切成多块小板分别下载，物理拼装还原
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSplitMode(!splitMode);
+                        setSectionGrids(null);
+                        setActiveSection(null);
+                        if (!splitMode) setRemapTrigger(prev => prev + 1);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 flex-shrink-0 ${
+                        splitMode ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+                          splitMode ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {splitMode && (
+                    <div>
+                      <label htmlFor="minPixelsPerBead" className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2">
+                        最小像素密度: {minPixelsPerBead} px/格
+                      </label>
+                      <input
+                        type="range"
+                        id="minPixelsPerBead"
+                        min="2"
+                        max="10"
+                        value={minPixelsPerBead}
+                        onChange={(e) => { setMinPixelsPerBead(Number(e.target.value)); }}
+                        onMouseUp={() => setRemapTrigger(prev => prev + 1)}
+                        onTouchEnd={() => setRemapTrigger(prev => prev + 1)}
+                        className="w-full h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                      />
+                      <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                        <span>2 (精细/多分块)</span>
+                        <span>10 (粗略/少分块)</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* 色号系统选择器 */}
                 <div className="sm:col-span-2">
                   <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2">色号系统:</label>
@@ -2289,6 +2455,39 @@ export default function Home() {
               )}
 
               {/* Canvas Preview Container */}
+              {/* 分块模式导航栏 */}
+              {splitMode && sectionGrids && (
+                <div className="mb-3 flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 rounded-lg px-4 py-2 border border-blue-100 dark:border-blue-800">
+                  <button
+                    onClick={() => {
+                      if (!activeSection) return;
+                      const newCol = Math.max(0, activeSection.col - 1);
+                      setActiveSection({ row: activeSection.row, col: newCol });
+                    }}
+                    disabled={!activeSection || activeSection.col === 0}
+                    className="px-2 py-1 text-sm rounded bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ← 上一块
+                  </button>
+                  <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                    第 <strong>{activeSection ? activeSection.col + 1 : 1}</strong> / {sectionGrids.layout.cols} 块
+                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                      (共 {sectionGrids.layout.cols} 块水平拼装)
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (!activeSection) return;
+                      const newCol = Math.min(sectionGrids.layout.cols - 1, activeSection.col + 1);
+                      setActiveSection({ row: activeSection.row, col: newCol });
+                    }}
+                    disabled={!activeSection || activeSection.col >= sectionGrids.layout.cols - 1}
+                    className="px-2 py-1 text-sm rounded bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    下一块 →
+                  </button>
+                </div>
+              )}
               {/* Apply dark mode styles */}
               <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-100 dark:border-gray-700">
                 {/* 大画布提示信息 */}
@@ -2496,15 +2695,25 @@ export default function Home() {
 
         {/* ++ HIDE Download Buttons in manual mode ++ */}
         {!isManualColoringMode && originalImageSrc && mappedPixelData && (
-            <div className="w-full md:max-w-2xl mt-4">
-              {/* 使用一个大按钮，现在所有的下载设置都通过弹窗控制 */}
+            <div className="w-full md:max-w-2xl mt-4 space-y-2">
+              {/* 分块模式：下载全部按钮 */}
+              {splitMode && sectionGrids && sectionGrids.layout.cols > 1 && (
+                <button
+                  onClick={() => { setPendingDownloadAll(true); setIsDownloadSettingsOpen(true); }}
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm sm:text-base rounded-lg hover:from-orange-600 hover:to-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-all duration-300 flex items-center justify-center gap-2 shadow-md"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  下载全部 {sectionGrids.layout.cols} 块图纸
+                </button>
+              )}
+              {/* 下载当前块（分块模式）或单张图纸 */}
               <button
-                onClick={() => setIsDownloadSettingsOpen(true)}
+                onClick={() => { setPendingDownloadAll(false); setIsDownloadSettingsOpen(true); }}
                 disabled={!mappedPixelData || !gridDimensions || gridDimensions.N === 0 || gridDimensions.M === 0 || activeBeadPalette.length === 0}
                 className="w-full py-2.5 px-4 bg-gradient-to-r from-green-500 to-green-600 text-white text-sm sm:text-base rounded-lg hover:from-green-600 hover:to-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg hover:translate-y-[-1px] disabled:hover:translate-y-0 disabled:hover:shadow-md"
                >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                下载拼豆图纸
+                {splitMode ? '下载当前块图纸' : '下载拼豆图纸'}
               </button>
             </div>
         )} {/* ++ End of HIDE Download Buttons ++ */}
@@ -2604,10 +2813,18 @@ export default function Home() {
       {/* 下载设置弹窗 */}
       <DownloadSettingsModal
         isOpen={isDownloadSettingsOpen}
-        onClose={() => setIsDownloadSettingsOpen(false)}
+        onClose={() => { setIsDownloadSettingsOpen(false); setPendingDownloadAll(false); }}
         options={downloadOptions}
         onOptionsChange={setDownloadOptions}
-        onDownload={handleDownloadRequest}
+        onDownload={(opts) => {
+          if (pendingDownloadAll) {
+            handleDownloadAllSections(opts);
+            showToast(`正在下载 ${sectionGrids?.layout.cols ?? 0} 块图纸...`);
+          } else {
+            handleDownloadRequest(opts);
+          }
+          setPendingDownloadAll(false);
+        }}
       />
 
       {/* 轻量提示 Toast */}
