@@ -80,6 +80,7 @@ import FloatingColorPalette from '../components/FloatingColorPalette';
 import FloatingToolbar from '../components/FloatingToolbar';
 import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
+import AssembledPreviewCanvas from '../components/AssembledPreviewCanvas';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
 import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
 
@@ -237,7 +238,7 @@ export default function Home() {
   const [useDithering, setUseDithering] = useState<boolean>(true);
   const [sharpenStrength, setSharpenStrength] = useState<number>(2); // 0-5
 
-  // 大图分块模式：把原图切成多个小板，每块独立生成图纸，用户物理拼装还原大图
+  // 大图分块模式：先出整图、再切割展示
   const [splitMode, setSplitMode] = useState<boolean>(false);
   const [minPixelsPerBead, setMinPixelsPerBead] = useState<number>(3); // 每格最少对应原图像素数（2-10），越小越精细但分块越多
   const [sectionGrids, setSectionGrids] = useState<{
@@ -245,6 +246,18 @@ export default function Home() {
     layout: { rows: number; cols: number };
   } | null>(null);
   const [activeSection, setActiveSection] = useState<{ row: number; col: number } | null>(null);
+  // 分块配置参数
+  const [boardSize, setBoardSize] = useState<number>(70);            // 板子横轴格数（决定每块大小）
+  const [splitRows, setSplitRows] = useState<number>(1);             // 切割行数
+  const [splitCols, setSplitCols] = useState<number>(2);             // 切割列数
+  // 全图像素数据快照（split mode 切换块导航时不被修改）
+  const [fullGridSnapshot, setFullGridSnapshot] = useState<MappedPixel[][] | null>(null);
+  // 切割布局（供 AssembledPreviewCanvas 画线）
+  const [chunkLayout, setChunkLayout] = useState<{
+    cols: number; rows: number;
+    colBreaks: number[];  // 格子坐标，竖线位置
+    rowBreaks: number[];  // 格子坐标，横线位置
+  } | null>(null);
 
   // 新增：高亮相关状态
   const [highlightColorKey, setHighlightColorKey] = useState<string | null>(null);
@@ -842,7 +855,7 @@ export default function Home() {
   const handleConfirmParameters = () => {
     // 处理格子数
     const minGranularity = 10;
-    const maxGranularity = 300;
+    const maxGranularity = 500;
     let newGranularity = parseInt(granularityInput, 10);
 
     if (isNaN(newGranularity) || newGranularity < minGranularity) {
@@ -969,6 +982,65 @@ export default function Home() {
     return mergedData;
   };
 
+  // 从全图像素网格中按行列切片，返回分块网格 + 切割断点（纯数组操作，零 canvas 计算）
+  const extractSections = (
+    fullGrid: MappedPixel[][], fullN: number, fullM: number,
+    rows: number, cols: number
+  ): {
+    grids: { data: MappedPixel[][]; N: number; M: number }[][];
+    layout: { rows: number; cols: number };
+    colBreaks: number[];
+    rowBreaks: number[];
+  } => {
+    // 计算列断点（格子坐标），均匀分配余数
+    const colBreaks: number[] = [];
+    const baseColW = Math.floor(fullN / cols);
+    let colAcc = 0;
+    for (let c = 0; c < cols - 1; c++) {
+      colAcc += baseColW + (c < (fullN % cols) ? 1 : 0);
+      colBreaks.push(colAcc);
+    }
+
+    // 计算行断点（格子坐标），均匀分配余数
+    const rowBreaks: number[] = [];
+    const baseRowH = Math.floor(fullM / rows);
+    let rowAcc = 0;
+    for (let r = 0; r < rows - 1; r++) {
+      rowAcc += baseRowH + (r < (fullM % rows) ? 1 : 0);
+      rowBreaks.push(rowAcc);
+    }
+
+    // 按断点切片
+    const grids: { data: MappedPixel[][]; N: number; M: number }[][] = [];
+    let rowStart = 0;
+    for (let r = 0; r < rows; r++) {
+      const rowEnd = r < rows - 1 ? rowBreaks[r] : fullM;
+      const rowGrids: { data: MappedPixel[][]; N: number; M: number }[] = [];
+
+      let colStart = 0;
+      for (let c = 0; c < cols; c++) {
+        const colEnd = c < cols - 1 ? colBreaks[c] : fullN;
+        // 从全图数组中提取该块的子网格
+        const sectionData: MappedPixel[][] = [];
+        for (let y = rowStart; y < rowEnd; y++) {
+          sectionData.push(fullGrid[y].slice(colStart, colEnd));
+        }
+
+        rowGrids.push({
+          data: sectionData,
+          N: colEnd - colStart,
+          M: rowEnd - rowStart,
+        });
+
+        colStart = colEnd;
+      }
+      grids.push(rowGrids);
+      rowStart = rowEnd;
+    }
+
+    return { grids, layout: { rows, cols }, colBreaks, rowBreaks };
+  };
+
   // 修改pixelateImage函数接收模式参数
   const pixelateImage = (imageSrc: string, detailLevel: number, threshold: number, currentPalette: PaletteColor[], mode: PixelationMode) => {
     console.log(`Attempting to pixelate with detail: ${detailLevel}, threshold: ${threshold}, mode: ${mode}`);
@@ -1066,90 +1138,73 @@ export default function Home() {
       }
 
       if (splitMode) {
-        // ========== 大图分块模式 ==========
-        const beadsPerBoardX = detailLevel; // 每板横轴格数
-        const beadsPerBoardY = Math.max(1, Math.round(beadsPerBoardX * aspectRatio));
+        // ========== 大图分块模式：先整图像素化，再切片展示 ==========
+        const pxPerBeadX = minPixelsPerBead;
+        const pxPerBeadY = minPixelsPerBead;
 
-        // 计算需要多少列分块（1D 水平分块，每块同高）
-        const totalBeadsNeededX = Math.ceil(sourceWidth / minPixelsPerBead);
-        const sectionCols = Math.ceil(totalBeadsNeededX / beadsPerBoardX);
+        // 全图像素化分辨率 = 原图尺寸 ÷ 像素密度（与 6/17 逐块像素化精度一致）
+        const fullBeadsX = Math.ceil(sourceWidth / pxPerBeadX);
+        const fullBeadsY = Math.ceil(sourceHeight / pxPerBeadY);
 
-        console.log(`分块模式: ${sectionCols} 列, 每块 ${beadsPerBoardX}x${beadsPerBoardY} 格, 原图 ${sourceWidth}x${sourceHeight}`);
+        // 防止超大图 OOM：最大 400 格宽，按比例缩放（400²=16万cell，安全边界）
+        const MAX_BEADS = 400;
+        const finalBeadsX = Math.min(fullBeadsX, MAX_BEADS);
+        const finalBeadsY = Math.max(1, Math.round(finalBeadsX * (fullBeadsY / fullBeadsX)));
 
-        const allSectionRows: { data: MappedPixel[][]; N: number; M: number }[][] = [];
+        // 计算分块行列数
+        const boardBeadsY = Math.max(1, Math.round(boardSize * (finalBeadsY / finalBeadsX)));
+        const actualCols = Math.min(splitCols, Math.max(1, Math.ceil(finalBeadsX / boardSize)));
+        const actualRows = Math.min(splitRows, Math.max(1, Math.ceil(finalBeadsY / boardBeadsY)));
 
-        for (let col = 0; col < sectionCols; col++) {
-          // 计算该块在原图中的像素范围
-          const pxPerBeadX = minPixelsPerBead;
-          const pixelX = col * beadsPerBoardX * pxPerBeadX;
-          const pixelW = Math.min(beadsPerBoardX * pxPerBeadX, sourceWidth - pixelX);
+        console.log(`分块模式: ${actualRows}×${actualCols}, 全图像素化 ${finalBeadsX}×${finalBeadsY} (原始需求 ${fullBeadsX}×${fullBeadsY}), 每板 ${boardSize}×${boardBeadsY} 格`);
 
-          // 该块的格子数（最后一块可能略窄）
-          const sectionN = Math.max(1, Math.round(beadsPerBoardX * (pixelW / (beadsPerBoardX * pxPerBeadX))));
-          const sectionM = beadsPerBoardY;
+        // 全图一次性像素化
+        const fullPixelData = calculatePixelGrid(
+          originalCtx, sourceWidth, sourceHeight,
+          finalBeadsX, finalBeadsY,
+          currentPalette, mode, t1FallbackColor, useDithering
+        );
 
-          // 创建临时 canvas，只拷贝该块的像素区域
-          const sectionCanvas = document.createElement('canvas');
-          sectionCanvas.width = pixelW;
-          sectionCanvas.height = sourceHeight;
-          const sectionCtx = sectionCanvas.getContext('2d', { willReadFrequently: true });
-          if (!sectionCtx) continue;
+        const fullMerged = mergeSimilarColorsInGrid(
+          fullPixelData, finalBeadsX, finalBeadsY,
+          currentPalette, threshold, colorDistance, TRANSPARENT_KEY
+        );
 
-          // 像素级精确拷贝：只取该块对应的原图像素
-          const srcData = originalCtx.getImageData(pixelX, 0, pixelW, sourceHeight);
-          sectionCtx.putImageData(srcData, 0, 0);
+        // 存储全图快照
+        setMappedPixelData(fullMerged);
+        setGridDimensions({ N: finalBeadsX, M: finalBeadsY });
+        setFullGridSnapshot(fullMerged);
 
-          // 该块独立预处理（锐化）
-          if (sharpenStrength > 0) {
-            preprocessImage(sectionCtx, pixelW, sourceHeight, sharpenStrength);
-          }
-
-          // 该块独立像素化
-          const sectionPixelData = calculatePixelGrid(
-            sectionCtx, pixelW, sourceHeight,
-            sectionN, sectionM,
-            currentPalette, mode, t1FallbackColor, useDithering
-          );
-
-          // 该块独立颜色合并
-          const merged = mergeSimilarColorsInGrid(
-            sectionPixelData, sectionN, sectionM,
-            currentPalette, threshold, colorDistance, TRANSPARENT_KEY
-          );
-
-          allSectionRows.push([{ data: merged, N: sectionN, M: sectionM }]);
-        }
-
-        // 存储分块结果
-        setSectionGrids({ grids: allSectionRows, layout: { rows: 1, cols: sectionCols } });
+        // 从全图切片
+        const result = extractSections(fullMerged, finalBeadsX, finalBeadsY, actualRows, actualCols);
+        setSectionGrids({ grids: result.grids, layout: result.layout });
+        setChunkLayout({
+          cols: result.layout.cols, rows: result.layout.rows,
+          colBreaks: result.colBreaks, rowBreaks: result.rowBreaks,
+        });
         setActiveSection({ row: 0, col: 0 });
 
-        // 预览画布：显示第一块
-        const firstSection = allSectionRows[0][0];
-        setMappedPixelData(firstSection.data);
-        setGridDimensions({ N: firstSection.N, M: firstSection.M });
-        const pw = Math.min(800, Math.max(400, firstSection.N * 6));
+        // 预览 canvas 尺寸（适配全图）
+        const pw = Math.min(800, Math.max(400, finalBeadsX * 4));
         pixelatedCanvas.width = pw;
-        pixelatedCanvas.height = Math.round(pw * (firstSection.M / firstSection.N));
+        pixelatedCanvas.height = Math.round(pw * (finalBeadsY / finalBeadsX));
 
-        // 所有块颜色合并统计
+        // 全图颜色统计
         const aggCounts: { [hexKey: string]: { count: number; color: string } } = {};
         let aggTotal = 0;
-        allSectionRows.flat().forEach(section => {
-          section.data.flat().forEach(cell => {
-            if (cell && cell.key && !cell.isExternal) {
-              const hk = cell.color;
-              if (!aggCounts[hk]) aggCounts[hk] = { count: 0, color: cell.color };
-              aggCounts[hk].count++;
-              aggTotal++;
-            }
-          });
+        fullMerged.flat().forEach(cell => {
+          if (cell && cell.key && !cell.isExternal) {
+            const hk = cell.color;
+            if (!aggCounts[hk]) aggCounts[hk] = { count: 0, color: cell.color };
+            aggCounts[hk].count++;
+            aggTotal++;
+          }
         });
         setColorCounts(aggCounts);
         setTotalBeadCount(aggTotal);
         setInitialGridColorKeys(new Set(Object.keys(aggCounts)));
 
-        console.log(`分块完成: ${sectionCols} 块, 共 ${aggTotal} 颗珠子, ${Object.keys(aggCounts).length} 种颜色`);
+        console.log(`分块完成: ${actualRows}×${actualCols}=${actualRows * actualCols} 块, 共 ${aggTotal} 颗珠子`);
       } else {
         // ========== 普通模式（原有逻辑）==========
         pixelatedCanvas.width = outputWidth; pixelatedCanvas.height = outputHeight;
@@ -1219,6 +1274,34 @@ export default function Home() {
     pixelatedCanvas.height = Math.round(pw * (section.M / section.N));
   }, [activeSection, splitMode, sectionGrids]);
 
+  // 分块模式：splitRows/splitCols 变化时重新切片（不触发像素化，纯数组操作）
+  useEffect(() => {
+    if (!splitMode || !fullGridSnapshot) return;
+    // 从快照本身推导全图尺寸（不能用 gridDimensions，会被 chunk 导航覆盖）
+    const fullN = fullGridSnapshot[0]?.length ?? 0;
+    const fullM = fullGridSnapshot.length;
+    if (fullN === 0 || fullM === 0) return;
+    const result = extractSections(
+      fullGridSnapshot, fullN, fullM,
+      splitRows, splitCols
+    );
+    setSectionGrids({ grids: result.grids, layout: result.layout });
+    setChunkLayout({
+      cols: result.layout.cols, rows: result.layout.rows,
+      colBreaks: result.colBreaks, rowBreaks: result.rowBreaks,
+    });
+    // 确保 activeSection 仍在有效范围
+    if (activeSection) {
+      const { row, col } = activeSection;
+      if (row >= splitRows || col >= splitCols) {
+        setActiveSection({ row: 0, col: 0 });
+      }
+    } else {
+      setActiveSection({ row: 0, col: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitRows, splitCols, boardSize]);
+
   // 修改useEffect中的pixelateImage调用，加入模式参数
   useEffect(() => {
     if (originalImageSrc && activeBeadPalette.length > 0) {
@@ -1277,7 +1360,7 @@ export default function Home() {
           ? `${activeSection.row + 1}-${activeSection.col + 1}`
           : undefined;
         const sectionInfo = splitMode && sectionGrids
-          ? `第 ${(activeSection?.col ?? 0) + 1} 块，共 ${sectionGrids.layout.cols} 块`
+          ? `第 ${(activeSection?.row ?? 0) + 1}-${(activeSection?.col ?? 0) + 1} 块，共 ${sectionGrids.layout.rows}×${sectionGrids.layout.cols} 块`
           : undefined;
         downloadImage({
           mappedPixelData,
@@ -1321,7 +1404,7 @@ export default function Home() {
               activeBeadPalette,
               selectedColorSystem,
               sectionLabel: `${rowIdx + 1}-${colIdx + 1}`,
-              sectionInfo: `第 ${colIdx + 1} 块，共 ${sectionGrids.layout.cols} 块`,
+              sectionInfo: `第 ${rowIdx + 1}-${colIdx + 1} 块，共 ${sectionGrids.layout.rows}×${sectionGrids.layout.cols} 块`,
             });
           }, (rowIdx * sectionGrids.layout.cols + colIdx) * 300);
         });
@@ -2199,7 +2282,7 @@ export default function Home() {
                       onChange={handleGranularityInputChange}
                       className="w-full p-1.5 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:ring-blue-500 focus:border-blue-500 h-9 shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
                       min="10"
-                      max="300"
+                      max="500"
                     />
                   </div>
                 </div>
@@ -2321,10 +2404,37 @@ export default function Home() {
                     </div>
                     <button
                       onClick={() => {
-                        setSplitMode(!splitMode);
-                        setSectionGrids(null);
-                        setActiveSection(null);
-                        if (!splitMode) setRemapTrigger(prev => prev + 1);
+                        const newSplitMode = !splitMode;
+                        setSplitMode(newSplitMode);
+                        if (newSplitMode) {
+                          if (mappedPixelData && gridDimensions) {
+                            // 已有像素数据：从快照切片，不重跑像素化
+                            setFullGridSnapshot(mappedPixelData);
+                            const result = extractSections(
+                              mappedPixelData, gridDimensions.N, gridDimensions.M,
+                              splitRows, splitCols
+                            );
+                            setSectionGrids({ grids: result.grids, layout: result.layout });
+                            setChunkLayout({
+                              cols: result.layout.cols, rows: result.layout.rows,
+                              colBreaks: result.colBreaks, rowBreaks: result.rowBreaks,
+                            });
+                            setActiveSection({ row: 0, col: 0 });
+                          } else {
+                            // 尚无像素数据：触发像素化
+                            setRemapTrigger(prev => prev + 1);
+                          }
+                        } else {
+                          // 关闭分块：恢复全图数据
+                          setSectionGrids(null);
+                          setActiveSection(null);
+                          setChunkLayout(null);
+                          if (fullGridSnapshot) {
+                            setMappedPixelData(fullGridSnapshot);
+                            setGridDimensions({ N: fullGridSnapshot[0]?.length ?? 0, M: fullGridSnapshot.length });
+                          }
+                          setFullGridSnapshot(null);
+                        }
                       }}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 flex-shrink-0 ${
                         splitMode ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
@@ -2338,25 +2448,97 @@ export default function Home() {
                     </button>
                   </div>
                   {splitMode && (
-                    <div>
-                      <label htmlFor="minPixelsPerBead" className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 sm:mb-2">
-                        最小像素密度: {minPixelsPerBead} px/格
-                      </label>
-                      <input
-                        type="range"
-                        id="minPixelsPerBead"
-                        min="2"
-                        max="10"
-                        value={minPixelsPerBead}
-                        onChange={(e) => { setMinPixelsPerBead(Number(e.target.value)); }}
-                        onMouseUp={() => setRemapTrigger(prev => prev + 1)}
-                        onTouchEnd={() => setRemapTrigger(prev => prev + 1)}
-                        className="w-full h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                      />
-                      <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                        <span>2 (精细/多分块)</span>
-                        <span>10 (粗略/少分块)</span>
+                    <div className="space-y-3">
+                      {/* 板子大小预设 */}
+                      <div>
+                        <label className="block text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                          板子大小: <span className="text-blue-600 dark:text-blue-400">{boardSize}</span> 格
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[29, 50, 70, 100].map(size => (
+                            <button
+                              key={size}
+                              onClick={() => setBoardSize(size)}
+                              className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                                boardSize === size
+                                  ? 'bg-blue-500 text-white border-blue-500'
+                                  : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-blue-400'
+                              }`}
+                            >
+                              {size}
+                            </button>
+                          ))}
+                          <input
+                            type="number"
+                            value={boardSize}
+                            onChange={(e) => { const v = parseInt(e.target.value) || 70; setBoardSize(Math.max(10, Math.min(500, v))); }}
+                            className="w-16 px-1.5 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-center"
+                            placeholder="自定义"
+                          />
+                        </div>
                       </div>
+
+                      {/* 推荐信息 */}
+                      {gridDimensions && (() => {
+                        const recX = Math.max(1, Math.ceil((gridDimensions.N) / boardSize));
+                        const recY = Math.max(1, Math.ceil((gridDimensions.M) / Math.max(1, Math.round(boardSize * (gridDimensions.M / gridDimensions.N)))));
+                        return (
+                          <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-750 rounded-lg p-2 space-y-0.5">
+                            <span>推荐切割：<strong className="text-gray-700 dark:text-gray-300">{recY} 行 × {recX} 列</strong></span>
+                            <span className="mx-1">|</span>
+                            <span>共 <strong className="text-gray-700 dark:text-gray-300">{recX * recY} 块</strong></span>
+                            <span className="mx-1">|</span>
+                            <span>每块约 <strong className="text-gray-700 dark:text-gray-300">{Math.round(gridDimensions.N / recX)}×{Math.round(gridDimensions.M / recY)}</strong> 格</span>
+                          </div>
+                        );
+                      })()}
+
+                      {/* 行列微调 */}
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 select-none">
+                          手动微调行列数 (当前 {splitRows}×{splitCols})
+                        </summary>
+                        <div className="mt-2 space-y-2 pl-1">
+                          <div>
+                            <label className="text-gray-600 dark:text-gray-400">行数: {splitRows}</label>
+                            <input
+                              type="range"
+                              min="1"
+                              max="10"
+                              value={splitRows}
+                              onChange={(e) => setSplitRows(Number(e.target.value))}
+                              className="w-full h-1.5 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-gray-600 dark:text-gray-400">列数: {splitCols}</label>
+                            <input
+                              type="range"
+                              min="1"
+                              max="10"
+                              value={splitCols}
+                              onChange={(e) => setSplitCols(Number(e.target.value))}
+                              className="w-full h-1.5 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor="minPixelsPerBead" className="text-gray-600 dark:text-gray-400">
+                              最小像素密度: {minPixelsPerBead} px/格
+                            </label>
+                            <input
+                              type="range"
+                              id="minPixelsPerBead"
+                              min="2"
+                              max="10"
+                              value={minPixelsPerBead}
+                              onChange={(e) => { setMinPixelsPerBead(Number(e.target.value)); }}
+                              onMouseUp={() => setRemapTrigger(prev => prev + 1)}
+                              onTouchEnd={() => setRemapTrigger(prev => prev + 1)}
+                              className="w-full h-1.5 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </details>
                     </div>
                   )}
                 </div>
@@ -2455,34 +2637,53 @@ export default function Home() {
               )}
 
               {/* Canvas Preview Container */}
-              {/* 分块模式导航栏 */}
-              {splitMode && sectionGrids && (
-                <div className="mb-3 flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 rounded-lg px-4 py-2 border border-blue-100 dark:border-blue-800">
+              {/* 分块模式：组装全图预览（可点击选块） */}
+              {splitMode && fullGridSnapshot && chunkLayout && (
+                <div className="mb-4">
+                  <AssembledPreviewCanvas
+                    fullPixelGrid={{ data: fullGridSnapshot, N: fullGridSnapshot[0]?.length ?? 0, M: fullGridSnapshot.length }}
+                    chunkLayout={chunkLayout}
+                    activeSection={activeSection}
+                    onSelectSection={(row, col) => setActiveSection({ row, col })}
+                  />
+                </div>
+              )}
+              {/* 分块模式：当前选中块指示 + 导航 */}
+              {splitMode && sectionGrids && activeSection && (
+                <div className="mb-3 flex items-center justify-center gap-3 text-sm">
                   <button
                     onClick={() => {
-                      if (!activeSection) return;
-                      const newCol = Math.max(0, activeSection.col - 1);
-                      setActiveSection({ row: activeSection.row, col: newCol });
+                      const { row, col } = activeSection;
+                      // 2D 导航：先左移，到头后上移
+                      if (col > 0) {
+                        setActiveSection({ row, col: col - 1 });
+                      } else if (row > 0) {
+                        setActiveSection({ row: row - 1, col: sectionGrids.layout.cols - 1 });
+                      }
                     }}
-                    disabled={!activeSection || activeSection.col === 0}
-                    className="px-2 py-1 text-sm rounded bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={activeSection.row === 0 && activeSection.col === 0}
+                    className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     ← 上一块
                   </button>
-                  <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                    第 <strong>{activeSection ? activeSection.col + 1 : 1}</strong> / {sectionGrids.layout.cols} 块
-                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
-                      (共 {sectionGrids.layout.cols} 块水平拼装)
+                  <span className="font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-3 py-1 rounded-full text-sm">
+                    块 {activeSection.row + 1}-{activeSection.col + 1} 详情
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1 font-normal">
+                      ({sectionGrids.grids[activeSection.row]?.[activeSection.col]?.N ?? 0}×{sectionGrids.grids[activeSection.row]?.[activeSection.col]?.M ?? 0} 格)
                     </span>
                   </span>
                   <button
                     onClick={() => {
-                      if (!activeSection) return;
-                      const newCol = Math.min(sectionGrids.layout.cols - 1, activeSection.col + 1);
-                      setActiveSection({ row: activeSection.row, col: newCol });
+                      const { row, col } = activeSection;
+                      // 2D 导航：先右移，到头后下移
+                      if (col < sectionGrids.layout.cols - 1) {
+                        setActiveSection({ row, col: col + 1 });
+                      } else if (row < sectionGrids.layout.rows - 1) {
+                        setActiveSection({ row: row + 1, col: 0 });
+                      }
                     }}
-                    disabled={!activeSection || activeSection.col >= sectionGrids.layout.cols - 1}
-                    className="px-2 py-1 text-sm rounded bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                    disabled={activeSection.row >= sectionGrids.layout.rows - 1 && activeSection.col >= sectionGrids.layout.cols - 1}
+                    className="px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     下一块 →
                   </button>
@@ -2697,13 +2898,13 @@ export default function Home() {
         {!isManualColoringMode && originalImageSrc && mappedPixelData && (
             <div className="w-full md:max-w-2xl mt-4 space-y-2">
               {/* 分块模式：下载全部按钮 */}
-              {splitMode && sectionGrids && sectionGrids.layout.cols > 1 && (
+              {splitMode && sectionGrids && sectionGrids.grids.flat().length > 1 && (
                 <button
                   onClick={() => { setPendingDownloadAll(true); setIsDownloadSettingsOpen(true); }}
                   className="w-full py-2.5 px-4 bg-gradient-to-r from-orange-500 to-orange-600 text-white text-sm sm:text-base rounded-lg hover:from-orange-600 hover:to-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-all duration-300 flex items-center justify-center gap-2 shadow-md"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                  下载全部 {sectionGrids.layout.cols} 块图纸
+                  下载全部 {sectionGrids.grids.flat().length} 块图纸
                 </button>
               )}
               {/* 下载当前块（分块模式）或单张图纸 */}
@@ -2819,7 +3020,7 @@ export default function Home() {
         onDownload={(opts) => {
           if (pendingDownloadAll) {
             handleDownloadAllSections(opts);
-            showToast(`正在下载 ${sectionGrids?.layout.cols ?? 0} 块图纸...`);
+            showToast(`正在下载 ${sectionGrids?.grids.flat().length ?? 0} 块图纸...`);
           } else {
             handleDownloadRequest(opts);
           }

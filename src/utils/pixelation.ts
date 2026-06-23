@@ -197,7 +197,8 @@ function ciede2000(lab1: { l: number; a: number; b: number }, lab2: { l: number;
   return Math.sqrt(termL * termL + termC * termC + termH * termH + rt * termC * termH);
 }
 
-// CIEDE2000 色差缓存
+// CIEDE2000 色差缓存（上限 5 万条，防大图 OOM）
+const CIEDE2000_CACHE_MAX = 50000;
 const ciede2000Cache = new Map<string, number>();
 
 // CIEDE2000 颜色距离（可选替 Oklab，感知更准）
@@ -210,6 +211,9 @@ export function colorDistanceCiede2000(rgb1: RgbColor, rgb2: RgbColor): number {
   const lab2 = xyzToLab(rgbToXyz(rgb2));
   const result = ciede2000(lab1, lab2);
 
+  if (ciede2000Cache.size >= CIEDE2000_CACHE_MAX) {
+    ciede2000Cache.clear(); // 超出上限则清空，避免 Map 溢出
+  }
   ciede2000Cache.set(key, result);
   return result;
 }

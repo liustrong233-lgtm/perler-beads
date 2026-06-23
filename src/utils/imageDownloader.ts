@@ -375,13 +375,45 @@ export async function downloadImage({
     
     ctx.fillText('拼豆底稿生成器', titleStartX, subTitleY);
 
-    // 5. 分块标签（如果有）
-    if (sectionInfo) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      const sectionFontSize = Math.max(10, Math.floor(titleFontSize * 0.3));
-      ctx.font = `400 ${sectionFontSize}px system-ui, -apple-system, sans-serif`;
-      ctx.textAlign = 'right';
-      ctx.fillText(sectionInfo, downloadWidth - 20, titleBarHeight * 0.55);
+    // 5. 分块标签（醒目的圆角色块）
+    if (sectionLabel && sectionInfo) {
+      // 绘制圆角矩形背景色块
+      const badgeFontSize = Math.max(13, Math.floor(titleFontSize * 0.38));
+      ctx.font = `bold ${badgeFontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const badgeText = `块 ${sectionLabel}`;
+      const textMetrics = ctx.measureText(badgeText);
+      const badgeW = textMetrics.width + 24;
+      const badgeH = badgeFontSize + 14;
+      const badgeX = downloadWidth - badgeW - 20;
+      const badgeY = (titleBarHeight - badgeH) / 2;
+
+      // 圆角矩形
+      const radius = 8;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.moveTo(badgeX + radius, badgeY);
+      ctx.lineTo(badgeX + badgeW - radius, badgeY);
+      ctx.quadraticCurveTo(badgeX + badgeW, badgeY, badgeX + badgeW, badgeY + radius);
+      ctx.lineTo(badgeX + badgeW, badgeY + badgeH - radius);
+      ctx.quadraticCurveTo(badgeX + badgeW, badgeY + badgeH, badgeX + badgeW - radius, badgeY + badgeH);
+      ctx.lineTo(badgeX + radius, badgeY + badgeH);
+      ctx.quadraticCurveTo(badgeX, badgeY + badgeH, badgeX, badgeY + badgeH - radius);
+      ctx.lineTo(badgeX, badgeY + radius);
+      ctx.quadraticCurveTo(badgeX, badgeY, badgeX + radius, badgeY);
+      ctx.closePath();
+      ctx.fill();
+
+      // 色块内文字
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2);
+
+      // 色块下方小字显示总数信息
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      const smallFontSize = Math.max(8, Math.floor(titleFontSize * 0.22));
+      ctx.font = `400 ${smallFontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.fillText(sectionInfo, badgeX + badgeW / 2, badgeY + badgeH + 14);
     }
 
     // 优雅的分割线
